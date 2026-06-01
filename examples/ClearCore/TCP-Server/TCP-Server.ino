@@ -14,18 +14,30 @@
 
 class ModbusEthernet : public ModbusAPI<ModbusTCPTemplate<EthernetServer, EthernetClient>> {};
 
-const uint16_t REG = 512;               // Modbus Hreg Offset
-const int32_t showDelay = 5000;   // Show result every n'th mellisecond
+const uint16_t REG = 39999;               // Modbus Hreg Offset maybe this should be 40000?
+const int32_t showDelay = 500;   // Show result every n'th mellisecond
 
-bool usingDhcp = true;
-byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE }; // MAC address for your controller
-IPAddress ip(192, 168, 30, 178); // The IP address will be dependent on your local network
+bool usingDhcp = false;
+byte mac[] = { 0x24, 0x15, 0x10, 0xB0, 0x34, 0x61 }; // MAC address for your controller updated to actual clearcore
+IPAddress server(192, 168, 1, 99); // The IP address will be dependent on your local network
+IPAddress client(192,168,1,101); // Ip address of the PLC 
 ModbusEthernet mb;               // Declare ModbusTCP instance
+int test = 0; 
+uint16_t test1[15]; 
+
 
 // Callback function for client connect. Returns true to allow connection.
-bool cbConn(IPAddress ip) {
-  Serial.println(ip);
+bool cbConn(IPAddress server) {
+  Serial.print("cbConn");
+  Serial.println(server);
   return true;
+}
+
+uint16_t cbLed(TRegister* reg, uint16_t val) {
+  //Attach ledPin to LED_COIL register
+  //Serial.print("cb led called  ");
+  //Serial.println(val);
+  return val;
 }
 
 void setup() {
@@ -48,7 +60,7 @@ void setup() {
         }
     }
     else {
-        Ethernet.begin(mac, ip);
+        Ethernet.begin(mac, server);
     }
 
     // Make sure the physical link is up before continuing.
@@ -56,12 +68,45 @@ void setup() {
         Serial.println("The Ethernet cable is unplugged...");
         delay(1000);
     }
-  mb.server();              // Act as Modbus TCP server
-  mb.onConnect(cbConn);
-  mb.addHreg(100);          // Expose Holding Register #100
-}
 
+
+
+  mb.server();           // Act as Modbus TCP server
+  mb.onConnect(cbConn);
+  mb.addHreg(0x098,0,100);          // Expose Holding Register #100
+  mb.addHreg(0x046,1,100);
+  mb.onGetHreg(0x4A,cbLed,10); // this works but I don't understand yet
+  mb.pullHreg(server,0x4A,0x4A);
+  if( mb.isConnected(server) ){
+    Serial.println("Server started") ;
+  }
+  //bool connect(client);// do we need a second connection to the client?
+
+}
+ int i = 0;
 void loop() {
-  mb.task();                      // Common local Modbus task
-  delay(10);
+
+ //mb.Hreg(0x098,1234);
+if (i>=15){
+  i= 0;
+}
+  mb.task();  
+  
+  Serial.println(mb.Hreg(0x4A));
+  /*
+  Serial.print(0x040+i );
+  Serial.print (" :=  ");
+  Serial.print(test);
+  Serial.println(test1[i]);
+  */
+    if( i<15){
+    //test = mb.readHreg(server,0x040,test1,10); // this doesn't work
+    //Serial.print(0x040+i );
+    //Serial.print (" :=  ");
+    //Serial.print(test);    
+    mb.Hreg(0x098,1234+i);
+    i++;
+
+  }                    // Common local Modbus task
+ delay(100);
 }
