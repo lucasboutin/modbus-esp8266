@@ -38,10 +38,20 @@ int movementTable[] = {0,0,0,0};
 int movement = 0;
 int tableLength = sizeof(movementTable) / sizeof(movementTable[0]);
 bool direction ; //1 equals positive 0 equals negative
-
+bool homing = 0;
+bool homed = 0;
 long oldTime;
 long newTime;
 
+
+enum i_motor {
+  empty = 0b0000000000000000,
+  reset = 0b0000000000000001,
+  fault = 0b0000000000000010,
+  warning = 0b0000000000000100,
+  home = 0b0000000000001000
+};
+enum i_motor motor_mask;
 
 // Callback function for client connect. Returns true to allow connection.
 bool cbConn(IPAddress server) {
@@ -94,7 +104,7 @@ void setup() {
                           Connector::CPM_MODE_STEP_AND_DIR);
 
     // Set the motor's HLFB mode to bipolar PWM
-    motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
+    motor.HlfbMode(MotorDriver::HLFB_MODE_STATIC);
     // Set the HFLB carrier frequency to 482 Hz
     motor.HlfbCarrier(MotorDriver::HLFB_CARRIER_482_HZ);
 
@@ -114,17 +124,22 @@ void setup() {
   mb.server();           // Act as Modbus TCP server
   mb.onConnect(cbConn);
   mb.addHreg(0x098,0,100);          // Expose Holding Register #100
-  mb.addHreg(0x046,1,100);
+  mb.addHreg(0x046,0,100);
+  mb.addCoil(0,0,2);
   mb.onGetHreg(0x4A,cbLed,10); // this works but I don't understand yet
-  mb.pullHreg(server,0x4A,0x4A);
-  mb.pullHreg(server,0x4B,0x4B);
-  mb.pullHreg(server,0x4C,0x4C);
-  mb.pullHreg(server,0x4D,0x4D);
+  mb.pullHreg(server,0x4A,0x4A); // stop = 0  start = 9999
+  mb.pullHreg(server,0x4B,0x4B);// amplitude (mm)
+  mb.pullHreg(server,0x4C,0x4C); // speed mm/s
+  mb.pullHreg(server,0x4D,0x4D); //dwell time (ms)
+  mb.pullHreg(server,0x4E,0x4E); // motor control bitmask See i_motor ENUM above
+  mb.pullCoil(server,0,0); // 0= stop 1 = start
+  mb.pullCoil(server,1,1); 
+
   if( mb.isConnected(server) ){
     Serial.println("Server started") ;
   }
-  motor.EnableRequest(true);
-  Serial.println("Motor Enabled");
+  motor.EnableRequest(false);
+  //Serial.println("Motor Enabled");
   
   //bool connect(client);// do we need a second connection to the client?
 
@@ -146,8 +161,10 @@ if (i>=15){
  // Serial.println(movementTable[3]);
     velocityLimit = speed * 6400; // This assumes a 1mm per rotation reduction
 		movementTable[0] = 0;
-		movementTable[3] = amplitude*6400;
-		movementTable[1,2] = (amplitude*6400)/2;
+		movementTable[3] = (amplitude*6400)/2;
+		movementTable[1] = (amplitude*6400)/2;
+    movementTable[2] = amplitude*6400;
+    
         // Sets the maximum velocity for each move
     motor.VelMax(velocityLimit);
     // Set the maximum acceleration for each move
@@ -181,14 +198,16 @@ if (i>=15){
 			}
 
 		}
-
-  if (connectedFlag){
+ // Serial.println(mb.Coil(0));
+  if (connectedFlag && (mb.Hreg(0x4A) > 200)){
+    motor.EnableRequest(true);
 		if(motor.StepGenerator::StepsComplete()){
       Serial.println("Step generator empty");
-			if ((movement == 0 || movement == 3) && !waitFlag){
+			if ((movement == 0 || movement == 2) && !waitFlag){
 				waitFlag = true;
+        delay(dwell);
 			}
-			movement = movement + 1;
+			movement = movement + 2;
 			if (movement >= tableLength){
 				movement = 0;				
 			}
@@ -201,9 +220,43 @@ if (i>=15){
         Serial.print("Move commanded to ");
         Serial.println((movementTable[movement]));
 			motor.Move((movementTable[movement]),MotorDriver::MOVE_TARGET_ABSOLUTE);  
-      } 
+      } else {
+        Serial.println("Waiting on dwell");
+      }
       }
       }              // Common local Modbus task
-      
+
+      //Motor control enum
+      /*
+      Serial.print ( "Hreg = ");
+      Serial.print (mb.Hreg(0x4E));
+      Serial.print ("    mask = ");
+      Serial.println(motor_mask = reset);
+
+      */
+      if (mb.Hreg(0x4E) & (motor_mask = reset)){
+          Serial.println("Motor Reset Request");
+          motor.EnableRequest(false);
+      } else if(homed)
+      {
+        motor.EnableRequest(true);
+      }
+
+      if (mb.Hreg(0x4E)& (motor_mask = home)){
+        motor.EnableRequest(false);
+        homing = 1;
+      }
+
+      if(homing){
+        Serial.println("starting Home");
+        motor.EnableRequest(true);
+        if (motor.HlfbHasRisen()){
+          homing=0;
+          homed = 1;
+          Serial.println("home done");
+        }
+      }
+
+
  //delay(100);
 }
